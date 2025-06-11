@@ -36,6 +36,43 @@ func (es ExamplesSchema) GetCategory() string {
 
 var bannedErrors = []string{"if-then failed", "if-else failed", "allOf failed", "oneOf failed"}
 
+// Helper function to recursively check if any part of a schema tree allows null values
+func schemaAllowsNull(schema *v3.Schema) bool {
+	if schema == nil || schema.Value == nil {
+		return false
+	}
+
+	// Check if the current schema is nullable
+	if schema.Value.Nullable != nil && *schema.Value.Nullable {
+		return true
+	}
+
+	// Check array items
+	if len(schema.Value.Type) > 0 && schema.Value.Type[0] == "array" && schema.Value.Items != nil {
+		if schema.Value.Items.A != nil {
+			itemSchema := schema.Value.Items.A.Schema()
+			if itemSchema != nil && schemaAllowsNull(&v3.Schema{Value: itemSchema}) {
+				return true
+			}
+		}
+	}
+
+	// Check object properties
+	if len(schema.Value.Type) > 0 && schema.Value.Type[0] == "object" && schema.Value.Properties != nil {
+		for propPair := schema.Value.Properties.First(); propPair != nil; propPair = propPair.Next() {
+			propSchemaProxy := propPair.Value()
+			if propSchemaProxy != nil {
+				propSchema := propSchemaProxy.Schema()
+				if propSchema != nil && schemaAllowsNull(&v3.Schema{Value: propSchema}) {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
 // Helper function to check if a validation error should be filtered out for null values
 // Only applies to OpenAPI versions before 3.1 (which use nullable: true)
 func shouldFilterNullError(errorReason string, openAPIVersion string, schema *v3.Schema, example any) bool {
@@ -46,41 +83,12 @@ func shouldFilterNullError(errorReason string, openAPIVersion string, schema *v3
 	}
 
 	// Only filter if the error is about null values
-	if !strings.Contains(errorReason, "got null") {
+	if !strings.Contains(errorReason, "got null") && !strings.Contains(errorReason, "null is not") {
 		return false
 	}
 
-	// Check if the schema itself is nullable
-	if schema != nil && schema.Value != nil &&
-		schema.Value.Nullable != nil && *schema.Value.Nullable {
-		return true
-	}
-
-	// Check if this is an object with nullable properties
-	if schema != nil && schema.Value != nil &&
-		schema.Value.Type != nil && len(schema.Value.Type) > 0 &&
-		schema.Value.Type[0] == "object" && schema.Value.Properties != nil {
-
-		if exampleMap, ok := example.(map[string]interface{}); ok {
-			// Check if any property in the example is null and that property is nullable
-			for propPair := schema.Value.Properties.First(); propPair != nil; propPair = propPair.Next() {
-				propName := propPair.Key()
-				propSchemaProxy := propPair.Value()
-
-				if propValue, exists := exampleMap[propName]; exists && propValue == nil {
-					if propSchemaProxy != nil {
-						// Get the actual schema from the proxy
-						propSchema := propSchemaProxy.Schema()
-						if propSchema != nil && propSchema.Nullable != nil && *propSchema.Nullable {
-							return true
-						}
-					}
-				}
-			}
-		}
-	}
-
-	return false
+	// Check if anywhere in the schema tree allows null values
+	return schemaAllowsNull(schema)
 }
 
 // RunRule will execute the ComponentDescription rule, based on supplied context and a supplied []*yaml.Node slice.
@@ -138,7 +146,7 @@ func (es ExamplesSchema) RunRule(_ []*yaml.Node, context model.RuleFunctionConte
 				}
 				for _, r := range validationErrors {
 					for _, err := range r.SchemaValidationErrors {
-						// Skip any error that mentions "got null" for OpenAPI versions before 3.1
+						// Skip any error that mentions null values for OpenAPI versions before 3.1
 						// and only if the schema is actually marked as nullable
 						if shouldFilterNullError(err.Reason, openAPIVersion, s, example) {
 							continue

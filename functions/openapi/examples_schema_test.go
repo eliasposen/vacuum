@@ -671,3 +671,72 @@ components:
 
 	assert.Len(t, res, 0)
 }
+
+func TestExamplesSchema_ErrorMessages_examples(t *testing.T) {
+	yml := `openapi: 3.0.0
+components:
+  schemas:
+    ErrorMessages:
+      description: This will contain error object with HTTP responseCode and array of error objects messages
+      properties:
+        errorDetails:
+          items:
+            properties:
+              code:
+                description: Error message code
+                type: string
+              detail:
+                description: Detailed error description to find out why the error occurred
+                nullable: true
+                type: string
+              message:
+                description: Information of the error Occurred
+                type: string
+            type: object
+          type: array
+        message:
+          type: string
+        responseCode:
+          description: Error code
+          example: 400
+          format: int32
+          maximum: 600
+          minimum: 100
+          type: integer
+      type: object
+      examples:
+        - errorDetails:
+            - code: "AP103"
+              detail: "agent.generalAgency.nationalProducerNumber"
+              message: "nationalProducerNumber should be <= 10 characters in length"
+          message: "Request Payload Validation Error Occurred"
+          responseCode: 400
+        - errorDetails:
+            - code: "GE004"
+              detail: null
+              message: "Invalid credentials provided"
+          message: "Unauthorized"
+          responseCode: 401`
+
+	document, err := libopenapi.NewDocument([]byte(yml))
+	if err != nil {
+		panic(fmt.Sprintf("cannot create new document: %e", err))
+	}
+	m, _ := document.BuildV3Model()
+	path := "$"
+	drDocument := drModel.NewDrDocument(m)
+	rule := buildOpenApiTestRuleAction(path, "examples_schema", "", nil)
+	ctx := buildOpenApiTestContext(model.CastToRuleAction(rule.Then), nil)
+	ctx.Document = document
+	ctx.DrDocument = drDocument
+	ctx.Rule = &rule
+	def := ExamplesSchema{}
+	res := def.RunRule(nil, ctx)
+
+	// Print any validation errors for debugging
+	for _, result := range res {
+		t.Logf("Validation error: %s", result.Message)
+	}
+
+	assert.Len(t, res, 0)
+}
