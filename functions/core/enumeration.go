@@ -4,13 +4,13 @@
 package core
 
 import (
-    "fmt"
-    "github.com/daveshanley/vacuum/model"
-    vacuumUtils "github.com/daveshanley/vacuum/utils"
-    "github.com/pb33f/doctor/model/high/v3"
-    "github.com/pb33f/libopenapi/utils"
-    "gopkg.in/yaml.v3"
-    "strings"
+	"fmt"
+	"github.com/daveshanley/vacuum/model"
+	vacuumUtils "github.com/daveshanley/vacuum/utils"
+	"github.com/pb33f/doctor/model/high/v3"
+	"gopkg.in/yaml.v3"
+	"strconv"
+	"strings"
 )
 
 // Enumeration is a rule that will check that a set of values meet the supplied 'values' supplied via functionOptions.
@@ -28,7 +28,6 @@ func (e Enumeration) GetSchema() model.RuleFunctionSchema {
 			},
 		},
 		MinProperties: 1,
-		MaxProperties: 10,
 		ErrorMessage:  "'enumerate' needs 'values' to operate. A valid example of 'values' are: 'cake, egg, milk'",
 	}
 }
@@ -51,11 +50,37 @@ func (e Enumeration) RunRule(nodes []*yaml.Node, context model.RuleFunctionConte
 	message := context.Rule.Message
 
 	// check supplied values (required)
-	props := utils.ConvertInterfaceIntoStringMap(context.Options)
-	if props["values"] == "" {
+	m, ok := context.Options.(map[string]any)
+	if !ok {
 		return nil
 	}
-	values = strings.Split(props["values"], ",")
+	optValues, ok := m["values"]
+	if !ok {
+		return nil
+	}
+	switch value := optValues.(type) {
+	case string:
+		values = strings.Split(value, ",")
+	case []any:
+		values = make([]string, 0, len(value))
+		for i := range value {
+			switch v := value[i].(type) {
+			case string:
+				values = append(values, v)
+			case int:
+				values = append(values, strconv.Itoa(v))
+			case int64:
+				values = append(values, strconv.FormatInt(v, 10))
+			case float64:
+				values = append(values, strconv.FormatFloat(v, 'f', -1, 64))
+			case bool:
+				values = append(values, strconv.FormatBool(v))
+			default:
+				// Fallback to fmt.Sprintf for complex types
+				values = append(values, fmt.Sprintf("%v", v))
+			}
+		}
+	}
 
 	pathValue := "unknown"
 	if path, ok := context.Given.(string); ok {
